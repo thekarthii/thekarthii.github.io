@@ -1,27 +1,45 @@
 import { useState, useMemo, useCallback } from 'react';
-import { Repository, FilterOptions, FilterState } from '@/types/portfolio';
+import { Repository, FilterState, FilterOptions } from '@/types/portfolio';
 
 const DEFAULT_FILTER_STATE: FilterState = {
   languages: [],
   topics: [],
   customTags: [],
   searchQuery: '',
-  sortBy: 'updated',
-  sortOrder: 'desc',
 };
 
 export function useProjectFilter(repositories: Repository[]) {
   const [filterState, setFilterState] = useState<FilterState>(DEFAULT_FILTER_STATE);
 
-  const availableFilters = useMemo((): FilterOptions => {
+  // Extract available filter options from repositories
+  const filterOptions = useMemo<FilterOptions>(() => {
     const languages = new Set<string>();
     const topics = new Set<string>();
     const customTags = new Set<string>();
 
     repositories.forEach((repo) => {
-      if (repo.language) languages.add(repo.language);
-      repo.topics?.forEach((topic) => topics.add(topic));
-      repo.customTags?.forEach((tag) => customTags.add(tag));
+      // Handle null/undefined language gracefully
+      if (repo.language && typeof repo.language === 'string') {
+        languages.add(repo.language);
+      }
+
+      // Handle topics array safely
+      if (Array.isArray(repo.topics)) {
+        repo.topics.forEach((topic) => {
+          if (topic && typeof topic === 'string') {
+            topics.add(topic);
+          }
+        });
+      }
+
+      // Handle custom tags array safely
+      if (Array.isArray(repo.customTags)) {
+        repo.customTags.forEach((tag) => {
+          if (tag && typeof tag === 'string') {
+            customTags.add(tag);
+          }
+        });
+      }
     });
 
     return {
@@ -31,119 +49,134 @@ export function useProjectFilter(repositories: Repository[]) {
     };
   }, [repositories]);
 
+  // Filter repositories based on current filter state
   const filteredRepositories = useMemo(() => {
-    let filtered = [...repositories];
-
-    // Filter by search query
-    if (filterState.searchQuery) {
-      const query = filterState.searchQuery.toLowerCase();
-      filtered = filtered.filter(
-        (repo) =>
-          repo.name.toLowerCase().includes(query) ||
-          repo.description?.toLowerCase().includes(query)
-      );
+    // Return empty array if no repositories provided
+    if (!Array.isArray(repositories) || repositories.length === 0) {
+      return [];
     }
 
-    // Filter by languages
-    if (filterState.languages.length > 0) {
-      filtered = filtered.filter(
-        (repo) => repo.language && filterState.languages.includes(repo.language)
-      );
-    }
-
-    // Filter by topics
-    if (filterState.topics.length > 0) {
-      filtered = filtered.filter((repo) =>
-        repo.topics?.some((topic) => filterState.topics.includes(topic))
-      );
-    }
-
-    // Filter by custom tags
-    if (filterState.customTags.length > 0) {
-      filtered = filtered.filter((repo) =>
-        repo.customTags?.some((tag) => filterState.customTags.includes(tag))
-      );
-    }
-
-    // Sort repositories
-    filtered.sort((a, b) => {
-      let comparison = 0;
-
-      switch (filterState.sortBy) {
-        case 'name':
-          comparison = a.name.localeCompare(b.name);
-          break;
-        case 'stars':
-          comparison = a.stargazersCount - b.stargazersCount;
-          break;
-        case 'updated':
-          comparison =
-            new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime();
-          break;
-        case 'created':
-          comparison =
-            new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
-          break;
+    return repositories.filter((repo) => {
+      // Skip invalid repository entries
+      if (!repo || typeof repo !== 'object') {
+        return false;
       }
 
-      return filterState.sortOrder === 'desc' ? -comparison : comparison;
-    });
+      // Language filter - check if repo language matches any selected
+      if (filterState.languages.length > 0) {
+        if (!repo.language || !filterState.languages.includes(repo.language)) {
+          return false;
+        }
+      }
 
-    return filtered;
+      // Topics filter - check if repo has at least one matching topic
+      if (filterState.topics.length > 0) {
+        const repoTopics = Array.isArray(repo.topics) ? repo.topics : [];
+        const hasMatchingTopic = filterState.topics.some((topic) =>
+          repoTopics.includes(topic)
+        );
+        if (!hasMatchingTopic) {
+          return false;
+        }
+      }
+
+      // Custom tags filter - check if repo has at least one matching tag
+      if (filterState.customTags.length > 0) {
+        const repoTags = Array.isArray(repo.customTags) ? repo.customTags : [];
+        const hasMatchingTag = filterState.customTags.some((tag) =>
+          repoTags.includes(tag)
+        );
+        if (!hasMatchingTag) {
+          return false;
+        }
+      }
+
+      // Search query filter - check name and description
+      if (filterState.searchQuery.trim()) {
+        const query = filterState.searchQuery.toLowerCase().trim();
+        const name = (repo.name || '').toLowerCase();
+        const description = (repo.description || '').toLowerCase();
+        
+        if (!name.includes(query) && !description.includes(query)) {
+          return false;
+        }
+      }
+
+      return true;
+    });
   }, [repositories, filterState]);
 
-  const setLanguages = useCallback((languages: string[]) => {
-    setFilterState((prev) => ({ ...prev, languages }));
-  }, []);
-
-  const setTopics = useCallback((topics: string[]) => {
-    setFilterState((prev) => ({ ...prev, topics }));
-  }, []);
-
-  const setCustomTags = useCallback((customTags: string[]) => {
-    setFilterState((prev) => ({ ...prev, customTags }));
-  }, []);
-
-  const setSearchQuery = useCallback((searchQuery: string) => {
-    setFilterState((prev) => ({ ...prev, searchQuery }));
-  }, []);
-
-  const setSortBy = useCallback((sortBy: FilterState['sortBy']) => {
-    setFilterState((prev) => ({ ...prev, sortBy }));
-  }, []);
-
-  const setSortOrder = useCallback((sortOrder: FilterState['sortOrder']) => {
-    setFilterState((prev) => ({ ...prev, sortOrder }));
-  }, []);
-
-  const resetFilters = useCallback(() => {
-    setFilterState(DEFAULT_FILTER_STATE);
-  }, []);
-
+  // Toggle a specific filter value
   const toggleFilter = useCallback(
-    (type: 'languages' | 'topics' | 'customTags', value: string) => {
+    (type: keyof Omit<FilterState, 'searchQuery'>, value: string) => {
       setFilterState((prev) => {
-        const current = prev[type];
-        const updated = current.includes(value)
-          ? current.filter((item) => item !== value)
-          : [...current, value];
-        return { ...prev, [type]: updated };
+        const currentValues = prev[type];
+        const newValues = currentValues.includes(value)
+          ? currentValues.filter((v) => v !== value)
+          : [...currentValues, value];
+
+        return {
+          ...prev,
+          [type]: newValues,
+        };
       });
     },
     []
   );
 
+  // Set search query with debounce-friendly approach
+  const setSearchQuery = useCallback((query: string) => {
+    setFilterState((prev) => ({
+      ...prev,
+      searchQuery: query,
+    }));
+  }, []);
+
+  // Clear all filters
+  const clearFilters = useCallback(() => {
+    setFilterState(DEFAULT_FILTER_STATE);
+  }, []);
+
+  // Clear specific filter type
+  const clearFilterType = useCallback(
+    (type: keyof Omit<FilterState, 'searchQuery'>) => {
+      setFilterState((prev) => ({
+        ...prev,
+        [type]: [],
+      }));
+    },
+    []
+  );
+
+  // Check if any filters are active
+  const hasActiveFilters = useMemo(() => {
+    return (
+      filterState.languages.length > 0 ||
+      filterState.topics.length > 0 ||
+      filterState.customTags.length > 0 ||
+      filterState.searchQuery.trim().length > 0
+    );
+  }, [filterState]);
+
+  // Get count of active filters
+  const activeFilterCount = useMemo(() => {
+    return (
+      filterState.languages.length +
+      filterState.topics.length +
+      filterState.customTags.length +
+      (filterState.searchQuery.trim() ? 1 : 0)
+    );
+  }, [filterState]);
+
   return {
     filterState,
+    filterOptions,
     filteredRepositories,
-    availableFilters,
-    setLanguages,
-    setTopics,
-    setCustomTags,
-    setSearchQuery,
-    setSortBy,
-    setSortOrder,
-    resetFilters,
     toggleFilter,
+    setSearchQuery,
+    clearFilters,
+    clearFilterType,
+    hasActiveFilters,
+    activeFilterCount,
   };
 }
