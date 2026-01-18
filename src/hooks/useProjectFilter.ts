@@ -1,7 +1,10 @@
-import { useState, useMemo, useCallback } from 'react';
-import { Repository, FilterState, FilterOptions } from '@/types/portfolio';
+'use client';
 
-const DEFAULT_FILTER_STATE: FilterState = {
+import { useState, useMemo, useCallback, useEffect } from 'react';
+import { Repository, FilterState, FilterType } from '@/types/portfolio';
+import { CUSTOM_TAGS } from '@/lib/constants';
+
+const initialFilterState: FilterState = {
   languages: [],
   topics: [],
   customTags: [],
@@ -9,174 +12,163 @@ const DEFAULT_FILTER_STATE: FilterState = {
 };
 
 export function useProjectFilter(repositories: Repository[]) {
-  const [filterState, setFilterState] = useState<FilterState>(DEFAULT_FILTER_STATE);
+  const [filters, setFilters] = useState<FilterState>(initialFilterState);
+  const [isInitialized, setIsInitialized] = useState(false);
+
+  // Initialize filters only on client side
+  useEffect(() => {
+    setIsInitialized(true);
+  }, []);
 
   // Extract available filter options from repositories
-  const filterOptions = useMemo<FilterOptions>(() => {
+  const availableFilters = useMemo(() => {
     const languages = new Set<string>();
     const topics = new Set<string>();
-    const customTags = new Set<string>();
 
     repositories.forEach((repo) => {
-      // Handle null/undefined language gracefully
-      if (repo.language && typeof repo.language === 'string') {
+      if (repo.language) {
         languages.add(repo.language);
       }
-
-      // Handle topics array safely
-      if (Array.isArray(repo.topics)) {
-        repo.topics.forEach((topic) => {
-          if (topic && typeof topic === 'string') {
-            topics.add(topic);
-          }
-        });
-      }
-
-      // Handle custom tags array safely
-      if (Array.isArray(repo.customTags)) {
-        repo.customTags.forEach((tag) => {
-          if (tag && typeof tag === 'string') {
-            customTags.add(tag);
-          }
-        });
-      }
+      repo.topics?.forEach((topic) => topics.add(topic));
     });
 
     return {
       languages: Array.from(languages).sort(),
       topics: Array.from(topics).sort(),
-      customTags: Array.from(customTags).sort(),
+      customTags: CUSTOM_TAGS,
     };
   }, [repositories]);
 
   // Filter repositories based on current filter state
   const filteredRepositories = useMemo(() => {
-    // Return empty array if no repositories provided
-    if (!Array.isArray(repositories) || repositories.length === 0) {
-      return [];
-    }
+    if (!isInitialized) return repositories;
 
     return repositories.filter((repo) => {
-      // Skip invalid repository entries
-      if (!repo || typeof repo !== 'object') {
-        return false;
+      // Search query filter
+      if (filters.searchQuery) {
+        const query = filters.searchQuery.toLowerCase();
+        const matchesSearch =
+          repo.name.toLowerCase().includes(query) ||
+          repo.description?.toLowerCase().includes(query) ||
+          repo.topics?.some((topic) => topic.toLowerCase().includes(query));
+
+        if (!matchesSearch) return false;
       }
 
-      // Language filter - check if repo language matches any selected
-      if (filterState.languages.length > 0) {
-        if (!repo.language || !filterState.languages.includes(repo.language)) {
+      // Language filter
+      if (filters.languages.length > 0) {
+        if (!repo.language || !filters.languages.includes(repo.language)) {
           return false;
         }
       }
 
-      // Topics filter - check if repo has at least one matching topic
-      if (filterState.topics.length > 0) {
-        const repoTopics = Array.isArray(repo.topics) ? repo.topics : [];
-        const hasMatchingTopic = filterState.topics.some((topic) =>
-          repoTopics.includes(topic)
+      // Topics filter
+      if (filters.topics.length > 0) {
+        const hasMatchingTopic = filters.topics.some((topic) =>
+          repo.topics?.includes(topic)
         );
-        if (!hasMatchingTopic) {
-          return false;
-        }
+        if (!hasMatchingTopic) return false;
       }
 
-      // Custom tags filter - check if repo has at least one matching tag
-      if (filterState.customTags.length > 0) {
-        const repoTags = Array.isArray(repo.customTags) ? repo.customTags : [];
-        const hasMatchingTag = filterState.customTags.some((tag) =>
-          repoTags.includes(tag)
-        );
-        if (!hasMatchingTag) {
-          return false;
-        }
-      }
+      // Custom tags filter (matches against topics and name)
+      if (filters.customTags.length > 0) {
+        const repoText = [
+          repo.name,
+          repo.description || '',
+          ...(repo.topics || []),
+        ]
+          .join(' ')
+          .toLowerCase();
 
-      // Search query filter - check name and description
-      if (filterState.searchQuery.trim()) {
-        const query = filterState.searchQuery.toLowerCase().trim();
-        const name = (repo.name || '').toLowerCase();
-        const description = (repo.description || '').toLowerCase();
-        
-        if (!name.includes(query) && !description.includes(query)) {
-          return false;
-        }
+        const hasMatchingTag = filters.customTags.some((tag) => {
+          const tagKeywords = getTagKeywords(tag);
+          return tagKeywords.some((keyword) => repoText.includes(keyword));
+        });
+
+        if (!hasMatchingTag) return false;
       }
 
       return true;
     });
-  }, [repositories, filterState]);
+  }, [repositories, filters, isInitialized]);
 
-  // Toggle a specific filter value
-  const toggleFilter = useCallback(
-    (type: keyof Omit<FilterState, 'searchQuery'>, value: string) => {
-      setFilterState((prev) => {
-        const currentValues = prev[type];
-        const newValues = currentValues.includes(value)
-          ? currentValues.filter((v) => v !== value)
-          : [...currentValues, value];
+  const toggleFilter = useCallback((type: FilterType, value: string) => {
+    setFilters((prev) => {
+      const key = `${type}s` as keyof Omit<FilterState, 'searchQuery'>;
+      const currentValues = prev[key] as string[];
+      const newValues = currentValues.includes(value)
+        ? currentValues.filter((v) => v !== value)
+        : [...currentValues, value];
 
-        return {
-          ...prev,
-          [type]: newValues,
-        };
-      });
-    },
-    []
-  );
+      return {
+        ...prev,
+        [key]: newValues,
+      };
+    });
+  }, []);
 
-  // Set search query with debounce-friendly approach
   const setSearchQuery = useCallback((query: string) => {
-    setFilterState((prev) => ({
+    setFilters((prev) => ({
       ...prev,
       searchQuery: query,
     }));
   }, []);
 
-  // Clear all filters
   const clearFilters = useCallback(() => {
-    setFilterState(DEFAULT_FILTER_STATE);
+    setFilters(initialFilterState);
   }, []);
 
-  // Clear specific filter type
-  const clearFilterType = useCallback(
-    (type: keyof Omit<FilterState, 'searchQuery'>) => {
-      setFilterState((prev) => ({
-        ...prev,
-        [type]: [],
-      }));
-    },
-    []
-  );
+  const clearFilterType = useCallback((type: FilterType) => {
+    setFilters((prev) => ({
+      ...prev,
+      [`${type}s`]: [],
+    }));
+  }, []);
 
-  // Check if any filters are active
   const hasActiveFilters = useMemo(() => {
     return (
-      filterState.languages.length > 0 ||
-      filterState.topics.length > 0 ||
-      filterState.customTags.length > 0 ||
-      filterState.searchQuery.trim().length > 0
+      filters.languages.length > 0 ||
+      filters.topics.length > 0 ||
+      filters.customTags.length > 0 ||
+      filters.searchQuery.length > 0
     );
-  }, [filterState]);
+  }, [filters]);
 
-  // Get count of active filters
   const activeFilterCount = useMemo(() => {
     return (
-      filterState.languages.length +
-      filterState.topics.length +
-      filterState.customTags.length +
-      (filterState.searchQuery.trim() ? 1 : 0)
+      filters.languages.length +
+      filters.topics.length +
+      filters.customTags.length +
+      (filters.searchQuery ? 1 : 0)
     );
-  }, [filterState]);
+  }, [filters]);
 
   return {
-    filterState,
-    filterOptions,
+    filters,
     filteredRepositories,
+    availableFilters,
     toggleFilter,
     setSearchQuery,
     clearFilters,
     clearFilterType,
     hasActiveFilters,
     activeFilterCount,
+    isInitialized,
   };
+}
+
+// Helper function to get keywords for custom tags
+function getTagKeywords(tag: string): string[] {
+  const keywordMap: Record<string, string[]> = {
+    embedded: ['embedded', 'arduino', 'esp32', 'stm32', 'microcontroller', 'mcu', 'firmware', 'rtos'],
+    'power-systems': ['power', 'battery', 'solar', 'inverter', 'converter', 'smps', 'psu'],
+    pcb: ['pcb', 'kicad', 'eagle', 'altium', 'gerber', 'board'],
+    fpga: ['fpga', 'verilog', 'vhdl', 'xilinx', 'altera', 'vivado'],
+    analog: ['analog', 'amplifier', 'filter', 'opamp', 'adc', 'dac'],
+    digital: ['digital', 'logic', 'uart', 'spi', 'i2c', 'protocol'],
+    rf: ['rf', 'radio', 'antenna', 'wireless', 'bluetooth', 'wifi', 'lora'],
+    automotive: ['automotive', 'can', 'lin', 'obd', 'vehicle', 'car'],
+  };
+
+  return keywordMap[tag.toLowerCase()] || [tag.toLowerCase()];
 }
