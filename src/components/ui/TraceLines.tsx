@@ -1,164 +1,156 @@
-'use client';
+"use client";
 
-import { useEffect, useState, useId } from 'react';
-import { cn } from '@/lib/utils';
-import { ANIMATION_DURATIONS } from '@/lib/constants';
+import React, { useEffect, useState, useId } from "react";
+import { cn } from "@/lib/utils";
+import { traceAnimations } from "@/lib/animations";
 
 interface TracePath {
   id: string;
   d: string;
   delay: number;
+  duration: number;
 }
 
 interface TraceLinesProps {
   className?: string;
-  pathCount?: number;
+  density?: "sparse" | "normal" | "dense";
   animated?: boolean;
+  color?: string;
 }
 
-export function TraceLines({
+const generatePaths = (density: string, baseId: string): TracePath[] => {
+  const pathCount = density === "sparse" ? 3 : density === "dense" ? 8 : 5;
+  const paths: TracePath[] = [];
+
+  // Use deterministic path generation to avoid hydration issues
+  const seedValues = [
+    { startY: 20, midX: 150, midY: 80, endX: 300, endY: 50 },
+    { startY: 50, midX: 100, midY: 120, endX: 280, endY: 90 },
+    { startY: 80, midX: 200, midY: 60, endX: 350, endY: 120 },
+    { startY: 30, midX: 120, midY: 100, endX: 320, endY: 70 },
+    { startY: 60, midX: 180, midY: 40, endX: 290, endY: 110 },
+    { startY: 40, midX: 90, midY: 90, endX: 260, endY: 60 },
+    { startY: 70, midX: 220, midY: 50, endX: 340, endY: 100 },
+    { startY: 25, midX: 140, midY: 110, endX: 310, endY: 80 },
+  ];
+
+  for (let i = 0; i < pathCount; i++) {
+    const seed = seedValues[i % seedValues.length];
+    const offset = i * 15;
+    
+    paths.push({
+      id: `${baseId}-trace-${i}`,
+      d: `M 0 ${seed.startY + offset} L ${seed.midX} ${seed.midY + offset} L ${seed.endX} ${seed.endY + offset} L 400 ${seed.startY + offset + 10}`,
+      delay: i * 0.3,
+      duration: 2 + (i % 3) * 0.5,
+    });
+  }
+
+  return paths;
+};
+
+export const TraceLines: React.FC<TraceLinesProps> = ({
   className,
-  pathCount = 5,
+  density = "normal",
   animated = true,
-}: TraceLinesProps) {
-  const [paths, setPaths] = useState<TracePath[]>([]);
+  color = "currentColor",
+}) => {
+  const baseId = useId();
   const [mounted, setMounted] = useState(false);
-  const uniqueId = useId();
+  const [paths, setPaths] = useState<TracePath[]>([]);
 
   useEffect(() => {
     setMounted(true);
-  }, []);
+    setPaths(generatePaths(density, baseId));
+  }, [density, baseId]);
 
-  useEffect(() => {
-    if (!mounted) return;
-
-    const generatePaths = (): TracePath[] => {
-      const generatedPaths: TracePath[] = [];
-
-      for (let i = 0; i < pathCount; i++) {
-        const startX = Math.random() * 100;
-        const startY = Math.random() * 100;
-        const midX1 = startX + (Math.random() - 0.5) * 40;
-        const midY1 = startY + Math.random() * 30;
-        const midX2 = midX1 + (Math.random() - 0.5) * 40;
-        const midY2 = midY1 + Math.random() * 30;
-        const endX = midX2 + (Math.random() - 0.5) * 20;
-        const endY = Math.min(midY2 + Math.random() * 20, 100);
-
-        generatedPaths.push({
-          id: `${uniqueId}-trace-${i}`,
-          d: `M ${startX} ${startY} L ${midX1} ${midY1} L ${midX2} ${midY2} L ${endX} ${endY}`,
-          delay: i * 0.3,
-        });
-      }
-
-      return generatedPaths;
-    };
-
-    setPaths(generatePaths());
-  }, [pathCount, mounted, uniqueId]);
-
-  // Render placeholder during SSR to prevent hydration mismatch
+  // Render placeholder during SSR to avoid hydration mismatch
   if (!mounted) {
     return (
-      <div className={cn('absolute inset-0 overflow-hidden pointer-events-none', className)}>
+      <div
+        className={cn(
+          "absolute inset-0 overflow-hidden pointer-events-none opacity-20",
+          className
+        )}
+        aria-hidden="true"
+      >
         <svg
           className="w-full h-full"
-          viewBox="0 0 100 100"
-          preserveAspectRatio="none"
-          aria-hidden="true"
-        />
+          viewBox="0 0 400 150"
+          preserveAspectRatio="xMidYMid slice"
+        >
+          {/* Static placeholder paths */}
+          <path
+            d="M 0 50 L 100 80 L 200 60 L 400 70"
+            stroke={color}
+            strokeWidth="1"
+            fill="none"
+            opacity="0.3"
+          />
+        </svg>
       </div>
     );
   }
 
   return (
-    <div className={cn('absolute inset-0 overflow-hidden pointer-events-none', className)}>
+    <div
+      className={cn(
+        "absolute inset-0 overflow-hidden pointer-events-none opacity-20",
+        className
+      )}
+      aria-hidden="true"
+    >
       <svg
         className="w-full h-full"
-        viewBox="0 0 100 100"
-        preserveAspectRatio="none"
-        aria-hidden="true"
+        viewBox="0 0 400 150"
+        preserveAspectRatio="xMidYMid slice"
       >
         <defs>
-          <linearGradient id={`${uniqueId}-traceGradient`} x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="#10b981" stopOpacity="0.6" />
-            <stop offset="50%" stopColor="#06b6d4" stopOpacity="0.4" />
-            <stop offset="100%" stopColor="#10b981" stopOpacity="0.2" />
+          <linearGradient id={`${baseId}-trace-gradient`} x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor={color} stopOpacity="0" />
+            <stop offset="50%" stopColor={color} stopOpacity="1" />
+            <stop offset="100%" stopColor={color} stopOpacity="0" />
           </linearGradient>
         </defs>
 
         {paths.map((path) => (
           <g key={path.id}>
-            {/* Background trace */}
+            {/* Base trace line */}
             <path
               d={path.d}
+              stroke={color}
+              strokeWidth="1"
               fill="none"
-              stroke="#1e3a3a"
-              strokeWidth="0.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
+              opacity="0.3"
             />
 
-            {/* Animated trace */}
-            <path
-              d={path.d}
-              fill="none"
-              stroke={`url(#${uniqueId}-traceGradient)`}
-              strokeWidth="0.3"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className={animated ? 'trace-animate' : ''}
-              style={{
-                strokeDasharray: '10 5',
-                animationDelay: `${path.delay}s`,
-                animationDuration: `${ANIMATION_DURATIONS.trace}ms`,
-              }}
-            />
+            {/* Animated pulse overlay */}
+            {animated && (
+              <path
+                d={path.d}
+                stroke={`url(#${baseId}-trace-gradient)`}
+                strokeWidth="2"
+                fill="none"
+                strokeDasharray="20 80"
+                style={{
+                  animation: `${traceAnimations.pulse} ${path.duration}s ease-in-out ${path.delay}s infinite`,
+                }}
+              />
+            )}
 
-            {/* Node points */}
+            {/* Connection nodes */}
             <circle
-              cx={path.d.split(' ')[1]}
-              cy={path.d.split(' ')[2]}
-              r="0.8"
-              fill="#10b981"
-              className={animated ? 'pulse-glow' : ''}
-              style={{ animationDelay: `${path.delay}s` }}
+              cx="0"
+              cy={path.d.split(" ")[2]}
+              r="2"
+              fill={color}
+              opacity="0.5"
             />
           </g>
         ))}
       </svg>
-
-      <style jsx>{`
-        .trace-animate {
-          animation: traceDash ${ANIMATION_DURATIONS.trace}ms linear infinite;
-        }
-
-        .pulse-glow {
-          animation: pulseGlow 2s ease-in-out infinite;
-        }
-
-        @keyframes traceDash {
-          from {
-            stroke-dashoffset: 30;
-          }
-          to {
-            stroke-dashoffset: 0;
-          }
-        }
-
-        @keyframes pulseGlow {
-          0%,
-          100% {
-            opacity: 0.4;
-            transform: scale(1);
-          }
-          50% {
-            opacity: 1;
-            transform: scale(1.5);
-          }
-        }
-      `}</style>
     </div>
   );
-}
+};
+
+export default TraceLines;
