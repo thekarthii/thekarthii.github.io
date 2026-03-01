@@ -1,145 +1,247 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useRef, useCallback } from 'react';
 import { cn } from '@/lib/utils';
-
-interface TracePath {
-  id: string;
-  d: string;
-  delay: number;
-  duration: number;
-}
+import { useHydration } from '@/hooks/useHydration';
 
 interface TraceLinesProps {
   className?: string;
-  density?: 'low' | 'medium' | 'high';
-  animated?: boolean;
   color?: string;
+  animated?: boolean;
+  density?: 'low' | 'medium' | 'high';
 }
 
-function generateTracePaths(count: number, seed: number): TracePath[] {
-  // Use seeded random for consistent paths between server and client
-  const seededRandom = (index: number) => {
-    const x = Math.sin(seed + index * 9999) * 10000;
-    return x - Math.floor(x);
-  };
+interface Point {
+  x: number;
+  y: number;
+}
 
-  const paths: TracePath[] = [];
-  
-  for (let i = 0; i < count; i++) {
-    const startX = seededRandom(i * 4) * 100;
-    const startY = seededRandom(i * 4 + 1) * 100;
-    const midX = seededRandom(i * 4 + 2) * 100;
-    const endX = seededRandom(i * 4 + 3) * 100;
-    const endY = startY + (seededRandom(i * 4 + 4) * 40 - 20);
-    
-    // Create right-angle trace paths like real PCB traces
-    const d = `M ${startX} ${startY} H ${midX} V ${endY} H ${endX}`;
-    
-    paths.push({
-      id: `trace-${i}`,
-      d,
-      delay: i * 0.2,
-      duration: 1.5 + seededRandom(i) * 0.5,
-    });
-  }
-  
-  return paths;
+interface TraceLine {
+  points: Point[];
+  progress: number;
+  speed: number;
 }
 
 export function TraceLines({
   className,
-  density = 'medium',
+  color = '#22c55e',
   animated = true,
-  color = 'currentColor',
+  density = 'medium',
 }: TraceLinesProps) {
-  const [mounted, setMounted] = useState(false);
-  const containerRef = useRef<SVGSVGElement>(null);
-  
-  // Use a fixed seed to ensure consistent paths
-  const seed = 12345;
-  
-  const densityMap = {
-    low: 5,
-    medium: 10,
-    high: 20,
-  };
-  
-  const traceCount = densityMap[density];
-  const paths = generateTracePaths(traceCount, seed);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const animationRef = useRef<number | null>(null);
+  const tracesRef = useRef<TraceLine[]>([]);
+  const hydrated = useHydration();
 
-  useEffect(() => {
-    setMounted(true);
+  const getDensityCount = useCallback(() => {
+    switch (density) {
+      case 'low':
+        return 3;
+      case 'high':
+        return 8;
+      default:
+        return 5;
+    }
+  }, [density]);
+
+  const generateTrace = useCallback((width: number, height: number): TraceLine => {
+    const points: Point[] = [];
+    const startX = Math.random() * width;
+    const startY = Math.random() * height;
+    
+    points.push({ x: startX, y: startY });
+    
+    let currentX = startX;
+    let currentY = startY;
+    const segments = 3 + Math.floor(Math.random() * 4);
+    
+    for (let i = 0; i < segments; i++) {
+      const isHorizontal = i % 2 === 0;
+      
+      if (isHorizontal) {
+        currentX += (Math.random() - 0.5) * 200;
+        currentX = Math.max(0, Math.min(width, currentX));
+      } else {
+        currentY += (Math.random() - 0.5) * 200;
+        currentY = Math.max(0, Math.min(height, currentY));
+      }
+      
+      points.push({ x: currentX, y: currentY });
+    }
+    
+    return {
+      points,
+      progress: 0,
+      speed: 0.002 + Math.random() * 0.003,
+    };
   }, []);
 
-  // Render a placeholder on server to prevent hydration mismatch
-  if (!mounted) {
-    return (
-      <svg
-        className={cn('absolute inset-0 w-full h-full pointer-events-none', className)}
-        preserveAspectRatio="none"
-        aria-hidden="true"
-      />
-    );
+  const initTraces = useCallback((width: number, height: number) => {
+    const count = getDensityCount();
+    tracesRef.current = Array.from({ length: count }, () => generateTrace(width, height));
+  }, [getDensityCount, generateTrace]);
+
+  const drawTrace = useCallback((ctx: CanvasRenderingContext2D, trace: TraceLine) => {
+    const { points, progress } = trace;
+    if (points.length < 2) return;
+
+    ctx.beginPath();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    // Calculate total length
+    let totalLength = 0;
+    const segmentLengths: number[] = [];
+    
+    for (let i = 1; i < points.length; i++) {
+      const dx = points[i].x - points[i - 1].x;
+      const dy = points[i].y - points[i - 1].y;
+      const length = Math.sqrt(dx * dx + dy * dy);
+      segmentLengths.push(length);
+      totalLength += length;
+    }
+
+    const drawLength = totalLength * progress;
+    let drawnLength = 0;
+
+    ctx.moveTo(points[0].x, points[0].y);
+
+    for (let i = 1; i < points.length; i++) {
+      const segmentLength = segmentLengths[i - 1];
+      
+      if (drawnLength + segmentLength <= drawLength) {
+        ctx.lineTo(points[i].x, points[i].y);
+        drawnLength += segmentLength;
+      } else {
+        const remaining = drawLength - drawnLength;
+        const ratio = remaining / segmentLength;
+        const x = points[i - 1].x + (points[i].x - points[i - 1].x) * ratio;
+        const y = points[i - 1].y + (points[i].y - points[i - 1].y) * ratio;
+        ctx.lineTo(x, y);
+        break;
+      }
+    }
+
+    ctx.globalAlpha = 0.6;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    // Draw glow effect at the end
+    if (progress > 0 && progress < 1) {
+      const glowPoint = getPointAtProgress(points, segmentLengths, totalLength, progress);
+      if (glowPoint) {
+        const gradient = ctx.createRadialGradient(
+          glowPoint.x, glowPoint.y, 0,
+          glowPoint.x, glowPoint.y, 8
+        );
+        gradient.addColorStop(0, color);
+        gradient.addColorStop(1, 'transparent');
+        
+        ctx.beginPath();
+        ctx.fillStyle = gradient;
+        ctx.arc(glowPoint.x, glowPoint.y, 8, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }, [color]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const resizeCanvas = () => {
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      ctx.scale(dpr, dpr);
+      initTraces(rect.width, rect.height);
+    };
+
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+
+    if (animated) {
+      const animate = () => {
+        const rect = canvas.getBoundingClientRect();
+        ctx.clearRect(0, 0, rect.width, rect.height);
+
+        tracesRef.current.forEach((trace, index) => {
+          trace.progress += trace.speed;
+          
+          if (trace.progress >= 1.5) {
+            tracesRef.current[index] = generateTrace(rect.width, rect.height);
+          }
+          
+          drawTrace(ctx, trace);
+        });
+
+        animationRef.current = requestAnimationFrame(animate);
+      };
+
+      animate();
+    } else {
+      tracesRef.current.forEach((trace) => {
+        trace.progress = 1;
+        drawTrace(ctx, trace);
+      });
+    }
+
+    return () => {
+      window.removeEventListener('resize', resizeCanvas);
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+      }
+    };
+  }, [hydrated, animated, initTraces, generateTrace, drawTrace]);
+
+  // Render nothing on server, placeholder div with same dimensions
+  if (!hydrated) {
+    return <div className={cn('absolute inset-0 pointer-events-none', className)} />;
   }
 
   return (
-    <svg
-      ref={containerRef}
-      className={cn('absolute inset-0 w-full h-full pointer-events-none', className)}
-      viewBox="0 0 100 100"
-      preserveAspectRatio="none"
+    <canvas
+      ref={canvasRef}
+      className={cn('absolute inset-0 pointer-events-none', className)}
+      style={{ width: '100%', height: '100%' }}
       aria-hidden="true"
-    >
-      <defs>
-        <linearGradient id="trace-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
-          <stop offset="0%" stopColor={color} stopOpacity="0" />
-          <stop offset="50%" stopColor={color} stopOpacity="0.6" />
-          <stop offset="100%" stopColor={color} stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      
-      {paths.map((path) => (
-        <g key={path.id}>
-          {/* Background trace */}
-          <path
-            d={path.d}
-            fill="none"
-            stroke={color}
-            strokeWidth="0.15"
-            strokeOpacity="0.1"
-          />
-          
-          {/* Animated trace */}
-          {animated && (
-            <path
-              d={path.d}
-              fill="none"
-              stroke="url(#trace-gradient)"
-              strokeWidth="0.2"
-              strokeLinecap="round"
-              style={{
-                strokeDasharray: '10 90',
-                strokeDashoffset: 0,
-                animation: `trace-flow ${path.duration}s linear ${path.delay}s infinite`,
-              }}
-            />
-          )}
-        </g>
-      ))}
-      
-      <style>{`
-        @keyframes trace-flow {
-          0% {
-            stroke-dashoffset: 100;
-          }
-          100% {
-            stroke-dashoffset: 0;
-          }
-        }
-      `}</style>
-    </svg>
+    />
   );
+}
+
+function getPointAtProgress(
+  points: Point[],
+  segmentLengths: number[],
+  totalLength: number,
+  progress: number
+): Point | null {
+  const targetLength = totalLength * Math.min(progress, 1);
+  let accumulatedLength = 0;
+
+  for (let i = 1; i < points.length; i++) {
+    const segmentLength = segmentLengths[i - 1];
+    
+    if (accumulatedLength + segmentLength >= targetLength) {
+      const remaining = targetLength - accumulatedLength;
+      const ratio = remaining / segmentLength;
+      return {
+        x: points[i - 1].x + (points[i].x - points[i - 1].x) * ratio,
+        y: points[i - 1].y + (points[i].y - points[i - 1].y) * ratio,
+      };
+    }
+    
+    accumulatedLength += segmentLength;
+  }
+
+  return points[points.length - 1];
 }
 
 export default TraceLines;
