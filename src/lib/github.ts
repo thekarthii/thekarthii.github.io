@@ -38,8 +38,8 @@ function getHeaders(): HeadersInit {
     'Accept': 'application/vnd.github.v3+json',
   };
   
-  if (process.env.GITHUB_TOKEN) {
-    headers['Authorization'] = `Bearer ${process.env.GITHUB_TOKEN}`;
+  if (process.env.GH_TOKEN_AUTH) {
+    headers['Authorization'] = `Bearer ${process.env.GH_TOKEN_AUTH}`;
   }
   
   return headers;
@@ -122,6 +122,7 @@ export const EE_TOPICS = [
   'power-systems',
   'pcb',
   'fpga',
+  'simulation',
   'microcontroller',
   'arduino',
   'raspberry-pi',
@@ -154,3 +155,4 @@ export function categorizeRepository(repo: GitHubRepository): string[] {
   
   return categories;
 }
+
