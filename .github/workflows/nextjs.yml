@@ -75,6 +75,9 @@ jobs:
         run: ${{ steps.detect-package-manager.outputs.manager }} ${{ steps.detect-package-manager.outputs.command }}
       - name: Build with Next.js
         run: ${{ steps.detect-package-manager.outputs.runner }} next build
+        env:
+            GH_TOKEN_AUTH: ${{ secrets.GH_TOKEN_AUTH }}
+            NEXT_PUBLIC_GITHUB_USERNAME: ${{ secrets.GH_USERNAME }}
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
